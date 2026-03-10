@@ -6,8 +6,10 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 // standard includes
+#include <chrono>
 #include <filesystem>
 #include <format>
+#include <mutex>
 #include <string>
 #include <utility>
 
@@ -142,6 +144,14 @@ namespace nvhttp {
   std::unordered_map<std::string, pair_session_t> map_id_sess;
   client_t client_root;
   std::atomic<uint32_t> session_id_counter;
+
+  // Rate limiting for pairing attempts
+  struct pair_rate_limit_t {
+    std::chrono::steady_clock::time_point last_attempt;
+    int failed_attempts = 0;
+  };
+  std::unordered_map<std::string, pair_rate_limit_t> pair_rate_limits;
+  std::mutex pair_rate_mutex;
 
   using args_t = SimpleWeb::CaseInsensitiveMultimap;
   using resp_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Response>;
@@ -345,6 +355,13 @@ namespace nvhttp {
     tree.put("root.paired", 0);
     tree.put("root.<xmlattr>.status_code", 400);
     tree.put("root.<xmlattr>.status_message", status_msg);
+
+    // Track failed attempt for rate limiting
+    {
+      std::lock_guard<std::mutex> lock(pair_rate_mutex);
+      pair_rate_limits[sess.client.uniqueID].failed_attempts++;
+    }
+
     remove_session(sess);  // Security measure, delete the session when something went wrong and force a re-pair
   }
 
@@ -486,6 +503,12 @@ namespace nvhttp {
 
       // The client is now successfully paired and will be authorized to connect
       add_authorized_client(client.name, std::move(client.cert));
+
+      // Reset rate limit on successful pairing
+      {
+        std::lock_guard<std::mutex> lock(pair_rate_mutex);
+        pair_rate_limits.erase(client.uniqueID);
+      }
     } else {
       tree.put("root.paired", 0);
     }
@@ -569,6 +592,50 @@ namespace nvhttp {
     }
 
     auto uniqID {get_arg(args, "uniqueid")};
+
+    // Rate limiting: prevent PIN brute force attacks.
+    // After 5 failed pairing attempts from the same uniqueID, enforce a 30-second cooldown
+    // that doubles with each subsequent failure (30s, 60s, 120s, ...).
+    {
+      std::lock_guard<std::mutex> lock(pair_rate_mutex);
+      auto now = std::chrono::steady_clock::now();
+
+      // Clean up stale rate limit entries (older than 1 hour)
+      for (auto it = pair_rate_limits.begin(); it != pair_rate_limits.end();) {
+        if (now - it->second.last_attempt > std::chrono::hours(1)) {
+          it = pair_rate_limits.erase(it);
+        } else {
+          ++it;
+        }
+      }
+
+      auto &rl = pair_rate_limits[uniqID];
+      if (rl.failed_attempts >= 5) {
+        auto backoff = std::chrono::seconds(30 * (1 << std::min(rl.failed_attempts - 5, 6)));
+        if (now - rl.last_attempt < backoff) {
+          BOOST_LOG(warning) << "Pairing rate limited for uniqueID: "sv << uniqID
+                             << " (attempt "sv << rl.failed_attempts << ", backoff "sv
+                             << std::chrono::duration_cast<std::chrono::seconds>(backoff).count() << "s)"sv;
+          tree.put("root.<xmlattr>.status_code", 429);
+          tree.put("root.<xmlattr>.status_message", "Too many pairing attempts. Try again later.");
+          return;
+        }
+      }
+      rl.last_attempt = now;
+    }
+
+    // Expire stale pairing sessions older than 10 minutes
+    {
+      auto now = std::chrono::steady_clock::now();
+      for (auto it = map_id_sess.begin(); it != map_id_sess.end();) {
+        if (now - it->second.created_at > std::chrono::minutes(10)) {
+          BOOST_LOG(debug) << "Expiring stale pairing session for: "sv << it->first;
+          it = map_id_sess.erase(it);
+        } else {
+          ++it;
+        }
+      }
+    }
 
     args_t::const_iterator it;
     if (it = args.find("phrase"); it != std::end(args)) {

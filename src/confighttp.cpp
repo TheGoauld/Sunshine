@@ -193,7 +193,28 @@ namespace confighttp {
     const auto username = authData.substr(0, index);
     const auto password = authData.substr(index + 1);
 
-    if (const auto hash = util::hex(crypto::hash(password + config::sunshine.salt)).to_string(); !boost::iequals(username, config::sunshine.username) || hash != config::sunshine.password) {
+    const auto hash = util::hex(crypto::hash(password + config::sunshine.salt)).to_string();
+
+    // Use constant-time comparison to prevent timing side-channel attacks
+    // on the password hash. Both username and hash are compared in full
+    // regardless of where the first mismatch occurs.
+    const auto &expected_user = config::sunshine.username;
+    const auto &expected_hash = config::sunshine.password;
+
+    bool user_match = (username.size() == expected_user.size());
+    for (size_t i = 0; i < std::min(username.size(), expected_user.size()); ++i) {
+      user_match &= (std::tolower(static_cast<unsigned char>(username[i])) ==
+                     std::tolower(static_cast<unsigned char>(expected_user[i])));
+    }
+
+    bool hash_match = (hash.size() == expected_hash.size());
+    volatile int diff = 0;
+    for (size_t i = 0; i < std::min(hash.size(), expected_hash.size()); ++i) {
+      diff |= (hash[i] ^ expected_hash[i]);
+    }
+    hash_match &= (diff == 0);
+
+    if (!user_match || !hash_match) {
       return false;
     }
 

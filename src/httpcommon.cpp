@@ -89,6 +89,13 @@ namespace http {
       return -1;
     }
 
+    // Restrict credentials file permissions to owner-only (contains password hash and salt)
+    std::error_code err_code;
+    fs::permissions(file, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace, err_code);
+    if (err_code) {
+      BOOST_LOG(warning) << "Couldn't restrict permissions of credentials file ["sv << file << "]: "sv << err_code.message();
+    }
+
     BOOST_LOG(info) << "New credentials have been created"sv;
     return 0;
   }

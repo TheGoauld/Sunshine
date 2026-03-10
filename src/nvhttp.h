@@ -6,6 +6,7 @@
 #pragma once
 
 // standard includes
+#include <chrono>
 #include <string>
 
 // lib includes
@@ -105,6 +106,12 @@ namespace nvhttp {
      * @brief used as a security measure to prevent out of order calls
      */
     PAIR_PHASE last_phase = PAIR_PHASE::NONE;
+
+    /**
+     * @brief Timestamp when this pairing session was created.
+     * @details Used to expire stale sessions that were never completed.
+     */
+    std::chrono::steady_clock::time_point created_at = std::chrono::steady_clock::now();
   };
 
   /**
