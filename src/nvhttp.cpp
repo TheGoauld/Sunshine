@@ -690,6 +690,14 @@ namespace nvhttp {
       }
     }
 
+    // Determine whether this is an unauthenticated HTTP request that should
+    // receive a minimal response. The HTTP endpoint is needed for Moonlight
+    // to discover the server and learn the HTTPS port for pairing, but there
+    // is no reason to expose codec capabilities, game state, or the server's
+    // local IP address to unauthenticated clients on the network.
+    constexpr bool is_https = std::is_same_v<SunshineHTTPS, T>;
+    bool minimal = !is_https && config::nvhttp.min_http_serverinfo;
+
     auto local_endpoint = request->local_endpoint();
 
     pt::ptree tree;
@@ -702,65 +710,88 @@ namespace nvhttp {
     tree.put("root.uniqueid", http::unique_id);
     tree.put("root.HttpsPort", net::map_port(PORT_HTTPS));
     tree.put("root.ExternalPort", net::map_port(PORT_HTTP));
-    tree.put("root.MaxLumaPixelsHEVC", video::active_hevc_mode > 1 ? "1869449984" : "0");
+
+    if (!minimal) {
+      tree.put("root.MaxLumaPixelsHEVC", video::active_hevc_mode > 1 ? "1869449984" : "0");
+    } else {
+      tree.put("root.MaxLumaPixelsHEVC", "0");
+    }
 
     // Only include the MAC address for requests sent from paired clients over HTTPS.
     // For HTTP requests, use a placeholder MAC address that Moonlight knows to ignore.
-    if constexpr (std::is_same_v<SunshineHTTPS, T>) {
+    if constexpr (is_https) {
       tree.put("root.mac", platf::get_mac_address(net::addr_to_normalized_string(local_endpoint.address())));
     } else {
       tree.put("root.mac", "00:00:00:00:00:00");
     }
 
-    // Moonlight clients track LAN IPv6 addresses separately from LocalIP which is expected to
-    // always be an IPv4 address. If we return that same IPv6 address here, it will clobber the
-    // stored LAN IPv4 address. To avoid this, we need to return an IPv4 address in this field
-    // when we get a request over IPv6.
-    //
-    // HACK: We should return the IPv4 address of local interface here, but we don't currently
-    // have that implemented. For now, we will emulate the behavior of GFE+GS-IPv6-Forwarder,
-    // which returns 127.0.0.1 as LocalIP for IPv6 connections. Moonlight clients with IPv6
-    // support know to ignore this bogus address.
-    if (local_endpoint.address().is_v6() && !local_endpoint.address().to_v6().is_v4_mapped()) {
-      tree.put("root.LocalIP", "127.0.0.1");
+    if (!minimal) {
+      // Moonlight clients track LAN IPv6 addresses separately from LocalIP which is expected to
+      // always be an IPv4 address. If we return that same IPv6 address here, it will clobber the
+      // stored LAN IPv4 address. To avoid this, we need to return an IPv4 address in this field
+      // when we get a request over IPv6.
+      //
+      // HACK: We should return the IPv4 address of local interface here, but we don't currently
+      // have that implemented. For now, we will emulate the behavior of GFE+GS-IPv6-Forwarder,
+      // which returns 127.0.0.1 as LocalIP for IPv6 connections. Moonlight clients with IPv6
+      // support know to ignore this bogus address.
+      if (local_endpoint.address().is_v6() && !local_endpoint.address().to_v6().is_v4_mapped()) {
+        tree.put("root.LocalIP", "127.0.0.1");
+      } else {
+        tree.put("root.LocalIP", net::addr_to_normalized_string(local_endpoint.address()));
+      }
     } else {
-      tree.put("root.LocalIP", net::addr_to_normalized_string(local_endpoint.address()));
+      // For unauthenticated requests, do not disclose the server's local IP.
+      // Moonlight will use the address it connected to instead.
+      tree.put("root.LocalIP", "127.0.0.1");
     }
 
-    uint32_t codec_mode_flags = SCM_H264;
-    if (video::last_encoder_probe_supported_yuv444_for_codec[0]) {
-      codec_mode_flags |= SCM_H264_HIGH8_444;
-    }
-    if (video::active_hevc_mode >= 2) {
-      codec_mode_flags |= SCM_HEVC;
-      if (video::last_encoder_probe_supported_yuv444_for_codec[1]) {
-        codec_mode_flags |= SCM_HEVC_REXT8_444;
+    if (!minimal) {
+      uint32_t codec_mode_flags = SCM_H264;
+      if (video::last_encoder_probe_supported_yuv444_for_codec[0]) {
+        codec_mode_flags |= SCM_H264_HIGH8_444;
       }
-    }
-    if (video::active_hevc_mode >= 3) {
-      codec_mode_flags |= SCM_HEVC_MAIN10;
-      if (video::last_encoder_probe_supported_yuv444_for_codec[1]) {
-        codec_mode_flags |= SCM_HEVC_REXT10_444;
+      if (video::active_hevc_mode >= 2) {
+        codec_mode_flags |= SCM_HEVC;
+        if (video::last_encoder_probe_supported_yuv444_for_codec[1]) {
+          codec_mode_flags |= SCM_HEVC_REXT8_444;
+        }
       }
-    }
-    if (video::active_av1_mode >= 2) {
-      codec_mode_flags |= SCM_AV1_MAIN8;
-      if (video::last_encoder_probe_supported_yuv444_for_codec[2]) {
-        codec_mode_flags |= SCM_AV1_HIGH8_444;
+      if (video::active_hevc_mode >= 3) {
+        codec_mode_flags |= SCM_HEVC_MAIN10;
+        if (video::last_encoder_probe_supported_yuv444_for_codec[1]) {
+          codec_mode_flags |= SCM_HEVC_REXT10_444;
+        }
       }
-    }
-    if (video::active_av1_mode >= 3) {
-      codec_mode_flags |= SCM_AV1_MAIN10;
-      if (video::last_encoder_probe_supported_yuv444_for_codec[2]) {
-        codec_mode_flags |= SCM_AV1_HIGH10_444;
+      if (video::active_av1_mode >= 2) {
+        codec_mode_flags |= SCM_AV1_MAIN8;
+        if (video::last_encoder_probe_supported_yuv444_for_codec[2]) {
+          codec_mode_flags |= SCM_AV1_HIGH8_444;
+        }
       }
+      if (video::active_av1_mode >= 3) {
+        codec_mode_flags |= SCM_AV1_MAIN10;
+        if (video::last_encoder_probe_supported_yuv444_for_codec[2]) {
+          codec_mode_flags |= SCM_AV1_HIGH10_444;
+        }
+      }
+      tree.put("root.ServerCodecModeSupport", codec_mode_flags);
+    } else {
+      // Return base H.264 support only. Full codec info is available after pairing via HTTPS.
+      tree.put("root.ServerCodecModeSupport", SCM_H264);
     }
-    tree.put("root.ServerCodecModeSupport", codec_mode_flags);
 
     auto current_appid = proc::proc.running();
     tree.put("root.PairStatus", pair_status);
-    tree.put("root.currentgame", current_appid);
-    tree.put("root.state", current_appid > 0 ? "SUNSHINE_SERVER_BUSY" : "SUNSHINE_SERVER_FREE");
+
+    if (!minimal) {
+      tree.put("root.currentgame", current_appid);
+      tree.put("root.state", current_appid > 0 ? "SUNSHINE_SERVER_BUSY" : "SUNSHINE_SERVER_FREE");
+    } else {
+      // Do not disclose whether a game is currently being streamed.
+      tree.put("root.currentgame", 0);
+      tree.put("root.state", "SUNSHINE_SERVER_FREE");
+    }
 
     std::ostringstream data;
 

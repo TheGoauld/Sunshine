@@ -180,6 +180,12 @@ namespace config {
     std::string file_state;
 
     std::string external_ip;
+
+    // When true, the unauthenticated HTTP /serverinfo endpoint returns only
+    // the minimum fields needed for Moonlight discovery and pairing.
+    // Codec capabilities, game state, and local IP are withheld until the
+    // client connects over HTTPS (after pairing). Default: true.
+    bool min_http_serverinfo;
   };
 
   struct input_t {

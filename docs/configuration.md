@@ -1606,6 +1606,39 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
+### min_http_serverinfo
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            When enabled, the unauthenticated HTTP `/serverinfo` endpoint (default port 47989)
+            returns only the minimum fields required for Moonlight client discovery and pairing.
+            Sensitive details like codec capabilities, current game state, and the server's local
+            IP address are withheld from unauthenticated requests. Full server information remains
+            available to paired clients connecting over the HTTPS endpoint.
+            <br><br>
+            This reduces the information disclosed to other devices on the network that have not
+            completed the pairing process. Moonlight discovery and pairing are unaffected.
+            <br><br>
+            @note{Set to `false` to restore the previous behavior of returning full server
+            information on the HTTP endpoint.}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            min_http_serverinfo = true
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            min_http_serverinfo = false
+            @endcode</td>
+    </tr>
+</table>
+
 ### csrf_allowed_origins
 
 <table>

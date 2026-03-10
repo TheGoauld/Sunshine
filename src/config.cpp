@@ -535,6 +535,7 @@ namespace config {
     platf::get_host_name(),  // sunshine_name,
     "sunshine_state.json"s,  // file_state
     {},  // external_ip
+    true,  // min_http_serverinfo
   };
 
   input_t input {
@@ -1177,6 +1178,7 @@ namespace config {
     path_f(vars, "credentials_file", config::sunshine.credentials_file);
 
     string_f(vars, "external_ip", nvhttp.external_ip);
+    bool_f(vars, "min_http_serverinfo", nvhttp.min_http_serverinfo);
     list_prep_cmd_f(vars, "global_prep_cmd", config::sunshine.prep_cmds);
 
     string_f(vars, "audio_sink", audio.sink);
